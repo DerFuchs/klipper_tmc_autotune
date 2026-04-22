@@ -148,6 +148,13 @@ class AutotuneTMC:
         self.extra_hysteresis = config.getint(
             "extra_hysteresis", default=EXTRA_HYSTERESIS, minval=0, maxval=8
         )
+        # Sense resistor value (Ohms) and optional CS override for the
+        # hysteresis CS-aware calculation (MSzturc fork). cs=0 means derive
+        # CS from sense_resistor and peak current at tuning time.
+        self.sense_resistor = config.getfloat(
+            "sense_resistor", default=0.075, above=0.0
+        )
+        self.cs = config.getint("cs", default=0, minval=0, maxval=31)
         self.tbl = config.getint("tbl", default=TBL, minval=0, maxval=3)
         self.toff = config.getint("toff", default=None, minval=1, maxval=15)
         self.tpfd = config.getint("tpfd", default=None, minval=0, maxval=15)
@@ -412,6 +419,8 @@ class AutotuneTMC:
             toff=self.toff,
             fclk=self.fclk,
             extra=self.extra_hysteresis,
+            rsense=self.sense_resistor,
+            scale=self.cs,
         )
         self._set_driver_field("hstrt", hstrt)
         self._set_driver_field("hend", hend)

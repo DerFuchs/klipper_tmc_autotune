@@ -41,9 +41,21 @@ class MotorConstants:
         )
 
     def hysteresis(
-        self, extra=0, fclk=12.5e6, volts=24.0, current=0.0, tblank_cycles=24, toff=0
+        self,
+        extra=0,
+        fclk=12.5e6,
+        volts=24.0,
+        current=0.0,
+        tblank_cycles=24,
+        toff=0,
+        rsense=0.075,
+        scale=0,
     ):
-        effective_current = current if current > 0.0 else self.max_current
+        # Klipper's run_current is RMS; the TMC hysteresis formula needs peak
+        # coil current, hence the sqrt(2) factor (MSzturc fork).
+        effective_current = (
+            current * math.sqrt(2) if current > 0.0 else self.max_current
+        )
         logging.info("autotune_tmc setting hysteresis based on %s V", volts)
         tsd = (12.0 + 32.0 * toff) / fclk
         dcoilblank = volts * (tblank_cycles / fclk) / self.coil_inductance
@@ -51,11 +63,27 @@ class MotorConstants:
             self.coil_resistance * effective_current * 2.0 * tsd / self.coil_inductance
         )
         logging.info("dcoilblank = %f, dcoilsd = %f", dcoilblank, dcoilsd)
+        # CS (current scale) register value, 0..31. Upstream assumed CS=31
+        # (i.e. the fixed '32' below); derive the actual CS from sense
+        # resistor and peak current so hysteresis matches the driver's real
+        # current threshold (MSzturc fork).
+        if scale > 0:
+            cs = scale
+        else:
+            cs = max(
+                0,
+                min(
+                    31,
+                    int(math.ceil(rsense * 32 * effective_current / 0.32) - 1),
+                ),
+            )
+        logging.info("current scale = %d", cs)
         hysteresis = extra + int(
             math.ceil(
                 max(
                     0.5
-                    + ((dcoilblank + dcoilsd) * 2 * 248 * 32 / effective_current) / 32
+                    + ((dcoilblank + dcoilsd) * 2 * 248 * (cs + 1) / effective_current)
+                    / 32
                     - 8,
                     -2,
                 )
