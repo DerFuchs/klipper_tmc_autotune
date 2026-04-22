@@ -66,15 +66,17 @@ class MotorConstants:
         # CS (current scale) register value, 0..31. Upstream assumed CS=31
         # (i.e. the fixed '32' below); derive the actual CS from sense
         # resistor and peak current so hysteresis matches the driver's real
-        # current threshold (MSzturc fork).
+        # current threshold (MSzturc fork). For 5160/2240 the caller should
+        # pass a pre-computed CS via `scale` because GLOBALSCALER matters.
         if scale > 0:
             cs = scale
         else:
+            VREF = 0.325
             cs = max(
                 0,
                 min(
                     31,
-                    int(math.ceil(rsense * 32 * effective_current / 0.32) - 1),
+                    int(math.ceil(rsense * 32 * effective_current / VREF) - 1),
                 ),
             )
         logging.info("current scale = %d", cs)

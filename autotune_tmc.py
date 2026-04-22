@@ -148,9 +148,15 @@ class AutotuneTMC:
         self.extra_hysteresis = config.getint(
             "extra_hysteresis", default=EXTRA_HYSTERESIS, minval=0, maxval=8
         )
+        # When False, skip the hysteresis (HSTRT/HEND) computation. Use this
+        # when hstrt/hend have been empirically tuned (e.g. via Klippain
+        # Shake&Tune) and pinned via driver_HSTRT / driver_HEND.
+        self.tune_hysteresis = config.getboolean("tune_hysteresis", default=True)
         # Sense resistor value (Ohms) and optional CS override for the
         # hysteresis CS-aware calculation (MSzturc fork). cs=0 means derive
-        # CS from sense_resistor and peak current at tuning time.
+        # CS at tuning time. For tmc5160/tmc2240 the derivation mirrors
+        # Klipper's GLOBALSCALER logic; for other drivers it uses the
+        # single-scaler formula in motor_constants.hysteresis().
         self.sense_resistor = config.getfloat(
             "sense_resistor", default=0.075, above=0.0
         )
@@ -411,7 +417,39 @@ class AutotuneTMC:
             tblank_cycles = [16, 24, 36, 54]
         return tblank_cycles[self.tbl]
 
+    def _derive_cs(self, run_current):
+        # Mirror Klipper's current-scaling logic per driver so the hysteresis
+        # formula uses the CS value the chip will actually run at. For 5160
+        # and 2240 this accounts for GLOBALSCALER; for others it falls back
+        # to the single-scaler formula inside motor_constants.hysteresis().
+        if self.cs > 0:
+            return self.cs
+        if self.driver_type in ("tmc5160", "tmc2240"):
+            VREF = 0.325
+            i_peak = run_current * math.sqrt(2)
+            gscaler = max(
+                32, min(256, int(i_peak * 256 * self.sense_resistor / VREF + 0.5))
+            )
+            return max(
+                0,
+                min(
+                    31,
+                    int(
+                        i_peak * 256 * 32 * self.sense_resistor
+                        / (gscaler * VREF) - 1 + 0.5
+                    ),
+                ),
+            )
+        return 0  # let motor_constants.hysteresis() derive from rsense
+
     def _set_hysteresis(self, run_current):
+        if not self.tune_hysteresis:
+            logging.info(
+                "autotune_tmc %s: tune_hysteresis=False, leaving HSTRT/HEND "
+                "as configured via driver_HSTRT/driver_HEND",
+                self.name,
+            )
+            return
         hstrt, hend = self.motor_object.hysteresis(
             volts=self.voltage,
             current=run_current,
@@ -420,7 +458,7 @@ class AutotuneTMC:
             fclk=self.fclk,
             extra=self.extra_hysteresis,
             rsense=self.sense_resistor,
-            scale=self.cs,
+            scale=self._derive_cs(run_current),
         )
         self._set_driver_field("hstrt", hstrt)
         self._set_driver_field("hend", hend)
